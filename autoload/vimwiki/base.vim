@@ -371,7 +371,6 @@ function! vimwiki#base#goto(...)
         \ anchor)
 endfunction
 
-
 function! vimwiki#base#backlinks()
   let current_filename = expand("%:p")
   let locations = []
@@ -395,6 +394,120 @@ function! vimwiki#base#backlinks()
   else
     call setloclist(0, locations, 'r')
     lopen
+  endif
+endfunction
+
+function! vimwiki#base#backlinks_nolopen()
+  let current_filename = expand("%:p")
+  let locations = []
+  for idx in range(vimwiki#vars#number_of_wikis())
+    let syntax = vimwiki#vars#get_wikilocal('syntax', idx)
+    let wikifiles = vimwiki#base#find_files(idx, 0)
+    for source_file in wikifiles
+      let links = s:get_links(source_file, idx)
+      for [target_file, _, lnum, col] in links
+        " don't include links from the current file to itself
+        if vimwiki#path#is_equal(target_file, current_filename) &&
+              \ !vimwiki#path#is_equal(target_file, source_file)
+          call add(locations, {'filename':source_file, 'lnum':lnum, 'col':col})
+        endif
+      endfor
+    endfor
+  endfor
+
+  if !empty(locations)
+    call setloclist(0, locations, 'r')
+  endif
+endfunction
+
+
+function! s:insert_backlinks_section()
+  let curr_buffer = expand('%:t:r')
+  
+  if curr_buffer != 'index'
+    if search('== Backlinks ==') == 0
+      call append(line('$'), '')
+      call append(line('$'), '== Backlinks ==')
+    endif
+  endif
+endfunction
+
+
+function! s:get_written_backlinks()
+  let links = []
+  let linenr = search('== Backlinks ==')
+  let syntax = vimwiki#vars#get_wikilocal('syntax', 0)
+  let rx_link = vimwiki#vars#get_syntaxlocal('wikilink', syntax)
+  let rx_lnum = 'l:\zs.*\ze,'
+  let rx_col = 'c:\zs.*\ze[)]'
+
+  while linenr < line('$')
+    let linenr += 1
+    let line = getline(linenr)
+    let link_name = matchstr(line, rx_link, 0, 1)
+    let link_lnum = str2nr(matchstr(line, rx_lnum, 0, 1))
+    let link_col = str2nr(matchstr(line, rx_col, 0, 1))
+
+    call add(links, {'linkname': link_name, 'lnum': link_lnum, 'col': link_col})
+  endwhile
+
+  return links
+endfunction
+
+
+function! s:parse_loclist(loclist)
+  let ploclist = []
+  
+  for loc in a:loclist
+    let linkname = expand(join(['#', loc.bufnr, ':t:r'], ''))
+    call add(ploclist, {'linkname': linkname, 'lnum': loc.lnum, 'col': loc.col})
+  endfor
+
+  return ploclist
+endfunction
+
+
+function! vimwiki#base#write_backlinks()
+  call s:insert_backlinks_section()
+
+  let loclist = getloclist(vimwiki#base#backlinks_nolopen())
+  let all_backlinks = s:parse_loclist(loclist)
+  let written_backlinks = s:get_written_backlinks()
+  let notwritten = []
+
+  for abl in all_backlinks
+    if(index(written_backlinks, abl) < 0)
+      call add(notwritten, abl)
+    endif
+  endfor
+
+  for nw in notwritten
+    let bn = bufnr(join([nw.linkname, '.wiki'], ''))
+    let linkpath = expand(join(['#', bn, ':p'], ''))
+    let linkcont = readfile(linkpath, '')
+    let linecont = split(linkcont[nw.lnum-1], '*')[-1]
+    let outcont = printf('    * [[%s]] (l:%s, c:%s): %s', nw.linkname, nw.lnum, nw.col, linecont) 
+    
+    if bufname() != 'index.wiki'
+      if nw.linkname != 'index'
+        call append(line('$'), outcont)
+      endif
+    endif
+  endfor
+
+  return notwritten
+endfunction
+
+
+function! vimwiki#base#write_title()
+  let title = expand(join(['#', bufnr(), ':t:r'], ''))
+  
+  if title != 'index'
+    let title = printf('= %s =', title)
+
+    if search(title) == 0
+      call append(line(1), title)
+    endif
   endif
 endfunction
 
@@ -618,10 +731,58 @@ function! s:get_links(wikifile, idx)
         call add(links, [target.filename, target.anchor, lnum, col])
       endif
     endwhile
+
+    " Stop searching for links beyond the line containing the '== Backlinks ==' string 
+    if line == '== Backlinks =='
+      break
+    endif
   endfor
 
   return links
 endfunction
+
+
+" Params: full path to a wiki file and its wiki number
+" Returns: a list of all links inside the wiki file and the line number where the backlinks
+"          sections start
+" Every list item has the form
+" [[target file, anchor, line number of the link in source file, column number], blstart]
+"function! s:get_links_and_blstart(wikifile, idx)
+"  if !filereadable(a:wikifile)
+"    return []
+"  endif
+"
+"  let syntax = vimwiki#vars#get_wikilocal('syntax', a:idx)
+"  let rx_link = vimwiki#vars#get_syntaxlocal('wikilink', syntax)
+"  let links = []
+"  let lnum = 0
+"  let blstart = 0
+"
+"  for line in readfile(a:wikifile)
+"    let lnum += 1
+"
+"    let link_count = 1
+"    while 1
+"      let col = match(line, rx_link, 0, link_count)+1
+"      let link_text = matchstr(line, rx_link, 0, link_count)
+"      if link_text == ''
+"        break
+"      endif
+"      let link_count += 1
+"      let target = vimwiki#base#resolve_link(link_text, a:wikifile)
+"      if target.filename != '' && target.scheme =~# '\mwiki\d\+\|diary\|file\|local'
+"        call add(links, [target.filename, target.anchor, lnum, col])
+"      endif
+"    endwhile
+"    
+"    let blstart += 1
+"    if stridx(line, 'Backlinks') >= 0
+"      break
+"    endif
+"  endfor
+"
+"  return [links, blstart]
+"endfunction
 
 
 function! vimwiki#base#check_links()
