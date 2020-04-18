@@ -433,69 +433,31 @@ function! s:insert_backlinks_section()
 endfunction
 
 
-function! s:get_written_backlinks()
-  let links = []
-  let linenr = search('== Backlinks ==')
-  let syntax = vimwiki#vars#get_wikilocal('syntax', 0)
-  let rx_link = vimwiki#vars#get_syntaxlocal('wikilink', syntax)
-  let rx_lnum = 'l:\zs.*\ze,'
-  let rx_col = 'c:\zs.*\ze[)]'
-
-  while linenr < line('$')
-    let linenr += 1
-    let line = getline(linenr)
-    let link_name = matchstr(line, rx_link, 0, 1)
-    let link_lnum = str2nr(matchstr(line, rx_lnum, 0, 1))
-    let link_col = str2nr(matchstr(line, rx_col, 0, 1))
-
-    call add(links, {'linkname': link_name, 'lnum': link_lnum, 'col': link_col})
-  endwhile
-
-  return links
-endfunction
-
-
-function! s:parse_loclist(loclist)
-  let ploclist = []
-  
-  for loc in a:loclist
-    let linkname = expand(join(['#', loc.bufnr, ':t:r'], ''))
-    call add(ploclist, {'linkname': linkname, 'lnum': loc.lnum, 'col': loc.col})
-  endfor
-
-  return ploclist
-endfunction
-
-
 function! vimwiki#base#write_backlinks()
-  call s:insert_backlinks_section()
+  let blstart = search('== Backlinks ==')
+
+  if blstart > 0
+    let blstart -= 1
+    execute blstart . ',$d'
+  endif
 
   let loclist = getloclist(vimwiki#base#backlinks_nolopen())
-  let all_backlinks = s:parse_loclist(loclist)
-  let written_backlinks = s:get_written_backlinks()
-  let notwritten = []
 
-  for abl in all_backlinks
-    if(index(written_backlinks, abl) < 0)
-      call add(notwritten, abl)
-    endif
-  endfor
+  if !empty(loclist)
+    call s:insert_backlinks_section()
 
-  for nw in notwritten
-    let bn = bufnr(join([nw.linkname, '.wiki'], ''))
-    let linkpath = expand(join(['#', bn, ':p'], ''))
-    let linkcont = readfile(linkpath, '')
-    let linecont = split(linkcont[nw.lnum-1], '*')[-1]
-    let outcont = printf('    * [[%s]] (l:%s, c:%s): %s', nw.linkname, nw.lnum, nw.col, linecont) 
-    
-    if bufname() != 'index.wiki'
-      if nw.linkname != 'index'
-        call append(line('$'), outcont)
+    for loc in loclist
+      let lname = expand('#' . loc.bufnr . ':t:r')
+      let lpath = expand('#' . loc.bufnr . ':p')
+      let lcont = readfile(lpath, '')
+      let lcont = split(lcont[loc.lnum-1], '*')[-1]
+      
+      if lname != 'index'
+        let line = printf("\t".'* [[%s]] (%s):%s', lname, loc.lnum, lcont)
+        call append(line('$'), line)
       endif
-    endif
-  endfor
-
-  return notwritten
+    endfor
+  endif
 endfunction
 
 
